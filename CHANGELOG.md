@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.4.1 (2026-08-22)
+## 0.4.1 (2026-09-17)
+
+### Changed
+- 插件改名 simple_memory → lite_memory（name / repo / get_data_dir / README / 日志前缀全量对齐）
+
+### Removed
+- 工具 docstring 里的撤销指引（并入统一撤销说明，描述去冗余）
+
+## 0.4.0 (2026-08-22)
 
 ### Changed
 - 捕获路径收敛为单一路径：`on_llm_response` 钩子，门控改用 `response.completion_text` 非空判断（流式/非流式、带/不带工具都过），不再依赖 DB 全量拉取
