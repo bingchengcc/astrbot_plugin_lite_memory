@@ -23,16 +23,6 @@ def next_num(text: str) -> int:
     return max((e["num"] for e in entries), default=0) + 1
 
 
-def find_dup_num(text: str, content: str) -> int:
-    target = content.strip()
-    if not target:
-        return 0
-    for e in parse_entries(text):
-        if e["content"].strip() == target:
-            return e["num"]
-    return 0
-
-
 def _join(lines: list[str], had_trailing_newline: bool) -> str:
     out = "\n".join(lines)
     if had_trailing_newline:

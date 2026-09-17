@@ -66,13 +66,6 @@ class DailyFile:
     def summary_path_for_date(self, day: str) -> Path:
         return self.day_dir_for_date(day) / "summary.md"
 
-    def raw_files_for_date(self, day: str) -> list[Path]:
-        """某天所有 raw 文件（raw.md, raw_2.md, ...）。"""
-        d = self.memory_dir / day
-        if not d.is_dir():
-            return []
-        return sorted(d.glob("raw*.md"))
-
     def append_to(self, path: Path, block: str) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:

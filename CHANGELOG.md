@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.2 (2026-09-17)
+
+### Added
+- 日记「无 states 降级」：当天有原文但无压缩 states 时直接读原文生成日记，不再空手而归
+- `memory_edit` 读模式（num=0）合并 pending：返回已含待落地改动并附「含 N 条待落地」提示，刚写的能立即看到
+- `digest_session_whitelist` 加载归一化：字符串 / 空串 / `[""]` 统一转成去重非空列表
+
+### Changed
+- 向量检索来源加权：日记/摘要/原文按 3/2/1 加权、重排后再取 top N，日记更易浮出
+- 日志前缀 `simple_memory` → `lite_memory` 全量对齐
+- `memory_edit` docstring 重写为「按目的选一种」决策式：补 num 漂移提示、INDEX 格式护栏（`]` 需闭合 / 可多行 / name 不存在自动新建块）、重写风险提示、写后验证指引
+- INDEX 写入报错精确化：给出确切格式并指出未匹配行；新建块与更新区分返回
+- 追加 / 改 / 删返回值统一带「待落地」说明
+
+### Fixed
+- 追加双前缀：content 已带 `[话题]` 前缀时自动剥离，避免 `[偏好] [偏好]`
+
+### Removed
+- 死代码：`_maybe_compress_notebook`、`find_dup_num`（并入 `find_num_by_content`）、`raw_files_for_date`、`most_recent_past_target`
+
 ## 0.4.1 (2026-09-17)
 
 ### Changed

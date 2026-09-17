@@ -16,7 +16,7 @@ from astrbot.core.star.filter.command import GreedyStr
 
 from .digest_worker import DigestWorker
 from .daily_md import DEFAULT_DIGEST_TIME, cycle_file_date
-from .notebook import append_text, delete_text, edit_text, entry_content_at, find_dup_num, find_num_by_content, parse_entries, renumber_text
+from .notebook import append_text, delete_text, edit_text, entry_content_at, find_num_by_content, parse_entries, renumber_text
 from .memory_store.chunker import Chunker
 from .memory_store.embedder import Embedder
 from .session_store import SessionStore
@@ -123,6 +123,19 @@ class SimpleMemory(Star):
         self.store: SessionStore | None = None
         self.digest_worker: DigestWorker | None = None
 
+    def _normalize_whitelist(self, v) -> list:
+        """白名单归一化：字符串/空串/[""] 都归一成去重的非空字符串列表。"""
+        if not v:
+            return []
+        if isinstance(v, str):
+            v = [v]
+        out: list[str] = []
+        for item in v:
+            s = str(item or "").strip()
+            if s and s not in out:
+                out.append(s)
+        return out
+
     async def initialize(self) -> None:
         _dbg("initialize() start")
         _scan_cmd_handlers()
@@ -132,10 +145,13 @@ class SimpleMemory(Star):
         self._index_state = self._load_index_state()
         self.workspace.mkdir(parents=True, exist_ok=True)
         digest_time = str(self.cfg.get("digest_time") or DEFAULT_DIGEST_TIME)
+        whitelist = self._normalize_whitelist(
+            self.cfg.get("digest_session_whitelist")
+        )
         self.spaces = SpaceManager(
             self.workspace,
             digest_time,
-            self.cfg.get("digest_session_whitelist") or [],
+            whitelist,
         )
         self._inited = True
 
@@ -153,7 +169,7 @@ class SimpleMemory(Star):
             diary_persona_id=str(self.cfg.get("diary_persona_id") or ""),
             
             raw_ttl_days=int(self.cfg.get("raw_ttl_days") or 0),
-            session_whitelist=self.cfg.get("digest_session_whitelist") or [],
+            session_whitelist=whitelist,
             diary_max_ctx=max(4096, int(self.cfg.get("diary_max_ctx") or 32768)),
         )
         self.digest_worker.start()
@@ -171,12 +187,12 @@ class SimpleMemory(Star):
         logger.addHandler(self._log_handler)
 
         if not use_embedding:
-            logger.info("simple_memory: use_embedding=false，跳过向量检索（纯 grep 模式）")
+            logger.info("lite_memory: use_embedding=false，跳过向量检索（纯 grep 模式）")
             _dbg("initialize() done (no embedding)")
             return
         if not provider_id:
             logger.warning(
-                "simple_memory: 未配置 embedding_provider_id（需在 AstrBot WebUI 提供商管理中配置 Embedding 类型提供商）"
+                "lite_memory: 未配置 embedding_provider_id（需在 AstrBot WebUI 提供商管理中配置 Embedding 类型提供商）"
             )
             _dbg("initialize() early return: no embedding_provider_id")
             return
@@ -199,18 +215,18 @@ class SimpleMemory(Star):
         n_dirs = len(self.spaces.existing_dirs())
         if self.embedder:
             logger.info(
-                f"simple_memory 启动完成，会话空间 {n_dirs} 个，向量检索已启用"
+                f"lite_memory 启动完成，会话空间 {n_dirs} 个，向量检索已启用"
             )
         else:
             logger.info(
-                f"simple_memory 启动完成，会话空间 {n_dirs} 个，纯 grep 模式（未启用向量检索）"
+                f"lite_memory 启动完成，会话空间 {n_dirs} 个，纯 grep 模式（未启用向量检索）"
             )
         _dbg(f"initialize() done workspace={self.workspace}")
 
     async def _deferred_embedder_load(self) -> None:
         """M6-9: 后台加载 embedding（原因见 initialize 注释），成功后做初始重建索引"""
         self.embedder_state = "STARTING"
-        logger.info("simple_memory 正在初始化 embedding（延迟加载）...")
+        logger.info("lite_memory 正在初始化 embedding（延迟加载）...")
         loaded = False
         for attempt in range(1, 7):
             try:
@@ -219,23 +235,23 @@ class SimpleMemory(Star):
                 break
             except Exception as e:
                 logger.warning(
-                    f"simple_memory embedding 初始化失败（第 {attempt}/6 次）: {e}"
+                    f"lite_memory embedding 初始化失败（第 {attempt}/6 次）: {e}"
                 )
                 if attempt < 6:
                     await asyncio.sleep(10)
         if not loaded:
             self.embedder_state = "DEGRADED"
             logger.warning(
-                "simple_memory embedding 6 次重试失败，语义检索不可用（状态: DEGRADED）"
+                "lite_memory embedding 6 次重试失败，语义检索不可用（状态: DEGRADED）"
             )
             self.embedder = None
             return
         self.embedder_state = "READY"
-        logger.info("simple_memory embedding 就绪（延迟加载）")
+        logger.info("lite_memory embedding 就绪（延迟加载）")
         try:
             await self._reindex_all(force=False)
         except Exception as e:
-            logger.warning(f"simple_memory 初始重建索引失败: {e}")
+            logger.warning(f"lite_memory 初始重建索引失败: {e}")
 
     async def terminate(self) -> None:
         _dbg("terminate() called")
@@ -258,7 +274,7 @@ class SimpleMemory(Star):
             self.embedder = None
         self.embedder_state = "FAILED"
         # spaces 只是路径计算器不占资源，重载窗口内退场实例的工具调用仍可安全使用
-        logger.info("simple_memory 已停止")
+        logger.info("lite_memory 已停止")
 
     @staticmethod
     def info() -> dict[str, Any]:
@@ -266,7 +282,7 @@ class SimpleMemory(Star):
             "name": "astrbot_plugin_lite_memory",
             "author": "冰城cc",
             "description": "三层记忆：向量检索 + system prompt 注入 + 每日日记 + 共同小本子",
-            "version": "0.4.1",
+            "version": "0.4.2",
         }
 
     def _vdb_for(self, session_id: str):
@@ -286,7 +302,7 @@ class SimpleMemory(Star):
             for stale in vdb.list_files() - disk:
                 vdb.delete_file(stale)
                 logger.info(
-                    f"simple_memory 清理残留索引: {self._state_key(dir_name, stale)}"
+                    f"lite_memory 清理残留索引: {self._state_key(dir_name, stale)}"
                 )
             reindexed = 0
             unchanged = 0
@@ -302,16 +318,16 @@ class SimpleMemory(Star):
                         reindexed += 1
                 except Exception:
                     logger.exception(
-                        f"simple_memory 索引文件失败（跳过，其余继续）: {key}"
+                        f"lite_memory 索引文件失败（跳过，其余继续）: {key}"
                     )
             total_re += reindexed
             total_unch += unchanged
             logger.info(
-                f"simple_memory 索引完成 {dir_name[:24]}：重建 {reindexed} 个文件，"
+                f"lite_memory 索引完成 {dir_name[:24]}：重建 {reindexed} 个文件，"
                 f"未变更跳过 {unchanged} 个"
             )
         logger.info(
-            f"simple_memory 全空间索引完成：重建 {total_re} 个文件，"
+            f"lite_memory 全空间索引完成：重建 {total_re} 个文件，"
             f"未变更跳过 {total_unch} 个"
         )
 
@@ -337,7 +353,7 @@ class SimpleMemory(Star):
             text = mf.read(path)
         except OSError:
             vdb.delete_file(rel)
-            logger.info(f"simple_memory 索引时文件已消失: {rel}")
+            logger.info(f"lite_memory 索引时文件已消失: {rel}")
             return False
         vdb.delete_file(rel)
         if not text.strip():
@@ -347,15 +363,15 @@ class SimpleMemory(Star):
             return False
         embs = await self.embedder.embed(chunks)
         if not path.is_file():
-            logger.info(f"simple_memory embedding 期间文件被删: {rel}")
+            logger.info(f"lite_memory embedding 期间文件被删: {rel}")
             return False
         try:
             recheck = mf.read(path)
         except OSError:
-            logger.info(f"simple_memory embedding 后文件被删: {rel}")
+            logger.info(f"lite_memory embedding 后文件被删: {rel}")
             return False
         if hashlib.sha256(recheck.encode("utf-8")).hexdigest() != hashlib.sha256(text.encode("utf-8")).hexdigest():
-            logger.info(f"simple_memory embedding 期间文件已变，丢弃本次索引: {rel}")
+            logger.info(f"lite_memory embedding 期间文件已变，丢弃本次索引: {rel}")
             return False
         file_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         # 从文件路径提取日记日期作为 timestamp（而非索引时间）
@@ -379,7 +395,7 @@ class SimpleMemory(Star):
             ],
         )
         logger.info(
-            f"simple_memory 已索引 {self._state_key(dir_name, rel)}，{len(chunks)} 块"
+            f"lite_memory 已索引 {self._state_key(dir_name, rel)}，{len(chunks)} 块"
         )
         return True
 
@@ -429,59 +445,6 @@ class SimpleMemory(Star):
             f"当对话变长时，部分上下文会被摘要压缩，你不需要提前收尾或总结当前进度，继续做事或聊天即可。"
         )
 
-    async def _maybe_compress_notebook(self, session_id: str) -> None:
-        """S10: 小本子超限时自动压缩最旧5条为1条摘要（后台执行）"""
-        if not self.cfg.get("auto_compress_notebook", False):
-            return
-        p = self.spaces.notebook_path(session_id)
-        if not p.is_file():
-            return
-        try:
-            text = p.read_text(encoding="utf-8", errors="ignore")
-            from .digest_worker import count_tokens
-            threshold = int(self.cfg.get("auto_compress_threshold") or 2000)
-            if count_tokens(text) < threshold:
-                return
-            entries = parse_entries(text)
-            if len(entries) < 8:
-                return
-            # 取最旧5条
-            oldest = entries[:5]
-            oldest_text = "\n".join(f"{e['num']}. [{e['ts']}] {e['content']}" for e in oldest)
-            # 用LLM压缩
-            provider_id = str(self.cfg.get("diary_provider_id") or "")
-            prompt = f"把以下记忆条目合并压缩为1条（保持关键信息）：\n{oldest_text}"
-            if provider_id:
-                resp = await self.context.llm_generate(
-                    chat_provider_id=provider_id,
-                    prompt=prompt,
-                )
-            else:
-                prov = await self.context.get_using_provider_async()
-                if prov is None:
-                    return
-                main_id = str(prov.provider_config.get("id", ""))
-                resp = await self.context.llm_generate(
-                    chat_provider_id=main_id,
-                    prompt=prompt,
-                )
-            summary = (resp.completion_text or "").strip()
-            if not summary:
-                return
-            # 替换最旧5条为1条摘要
-            from .notebook import append_text, renumber_text
-            remaining = "\n".join(f"{e['num']}. [{e['ts']}] {e['content']}" for e in entries[5:])
-            compressed = append_text("", f"[自动压缩] {summary}")[0]
-            if remaining.strip():
-                compressed = compressed.rstrip() + "\n" + remaining
-            compressed = renumber_text(compressed)
-            self._notebook_bak(p)
-            p.write_text(compressed, encoding="utf-8")
-            self._invalidate_session_cache(session_id)
-            logger.info(f"simple_memory 小本子自动压缩: {len(entries)}→{len(entries)-4} 条")
-        except Exception as e:
-            logger.warning(f"simple_memory 小本子自动压缩失败: {e}")
-
     def _build_inject(self, session_id: str) -> str:
         parts: list[str] = []
         if self.spaces.is_active(session_id):
@@ -527,10 +490,10 @@ class SimpleMemory(Star):
                 "[经验 END]"
             )
             settings["llm_compress_instruction"] = instr + addition
-            logger.info("simple_memory 已注入压缩摘要结构标记")
+            logger.info("lite_memory 已注入压缩摘要结构标记")
             _dbg("compress instruction 注入完成")
         except Exception as e:
-            logger.warning(f"simple_memory 压缩提示词注入失败（不影响主功能）: {e}")
+            logger.warning(f"lite_memory 压缩提示词注入失败（不影响主功能）: {e}")
             _dbg(f"compress instruction 注入异常: {e}")
 
     def _load_index_state(self) -> dict:
@@ -539,7 +502,7 @@ class SimpleMemory(Star):
             if p.is_file():
                 return json.loads(p.read_text(encoding="utf-8"))
         except Exception:
-            logger.exception("simple_memory 读取 index_state 失败")
+            logger.exception("lite_memory 读取 index_state 失败")
         return {}
 
     def _save_index_state(self) -> None:
@@ -550,7 +513,7 @@ class SimpleMemory(Star):
                 encoding="utf-8",
             )
         except Exception:
-            logger.exception("simple_memory 写入 index_state 失败")
+            logger.exception("lite_memory 写入 index_state 失败")
 
     def _should_reindex_file(self, path: Path, rel: str) -> bool:
         st = self._index_state.get(rel)
@@ -568,7 +531,7 @@ class SimpleMemory(Star):
         delta = raw[size:].decode("utf-8", errors="ignore")
         if not delta.strip():
             return False
-        logger.info(f"simple_memory watcher 重建: {rel} 增量 {self.embedder.count_tokens(delta)} token")
+        logger.info(f"lite_memory watcher 重建: {rel} 增量 {self.embedder.count_tokens(delta)} token")
         return True
 
     def _record_indexed(self, rel: str, path: Path) -> None:
@@ -580,7 +543,7 @@ class SimpleMemory(Star):
             }
             self._save_index_state()
         except Exception:
-            logger.exception("simple_memory 记录索引状态失败")
+            logger.exception("lite_memory 记录索引状态失败")
 
     def _space_dir_of(self, path: Path) -> str | None:
         try:
@@ -622,7 +585,7 @@ class SimpleMemory(Star):
             return
         if await self._index_file(path, dir_name):
             self._record_indexed(key, path)
-            logger.info(f"simple_memory 增量重建索引: {key}")
+            logger.info(f"lite_memory 增量重建索引: {key}")
 
     async def _on_md_deleted(self, path: Path) -> None:
         if not self.embedder:
@@ -645,7 +608,7 @@ class SimpleMemory(Star):
                 await self._index_file_locked(path, dir_name)
             else:
                 logger.info(
-                    f"simple_memory 已移除索引: {self._state_key(dir_name, rel)}"
+                    f"lite_memory 已移除索引: {self._state_key(dir_name, rel)}"
                 )
 
     def _invalidate_session_cache(self, session_id: str) -> None:
@@ -761,7 +724,7 @@ class SimpleMemory(Star):
                 last_compress_ts=int(time.time()),
             )
             logger.info(
-                f"simple_memory 捕获新摘要 {session_id[:16]}: {len(summary)} 字"
+                f"lite_memory 捕获新摘要 {session_id[:16]}: {len(summary)} 字"
             )
             now = datetime.now()
             df = self.spaces.daily_file(session_id)
@@ -774,7 +737,7 @@ class SimpleMemory(Star):
                 df.path_for(now), f"## [压缩 {now.strftime('%H:%M')}]"
             )
         except Exception:
-            logger.exception("simple_memory 压缩检查点入账失败")
+            logger.exception("lite_memory 压缩检查点入账失败")
 
     def _add_tag_to_summary(self, session_id: str, entry_name: str, tag: str) -> None:
         """Append a tag to an INDEX.md entry's summary line (create from @pending placeholder if needed)."""
@@ -865,6 +828,7 @@ class SimpleMemory(Star):
         # 门控直接用 on_agent_done 传入的 response：流式/非流式、带/不带工具都过；
         # 报错路径（role="err"）和 Stop output 中断（半截文本）也走这里
         if response is None or not (response.completion_text or "").strip():
+            _dbg("_capture_streaming 门控拦截: response为空或completion_text为空")
             return
         try:
             session_id = str(event.unified_msg_origin)
@@ -891,11 +855,11 @@ class SimpleMemory(Star):
             path = df.path_for(datetime.now())
             df.append_to(path, chr(10).join(lines))
             logger.info(
-                f"simple_memory 原文落盘 {session_id[:16]}: "
+                f"lite_memory 原文落盘 {session_id[:16]}: "
                 f"user={len(user_msg)} assistant={len(assistant_msg)}"
             )
         except Exception:
-            logger.exception("simple_memory 原文捕获失败")
+            logger.exception("lite_memory 原文捕获失败")
 
 
 
@@ -968,7 +932,18 @@ class SimpleMemory(Star):
             vector_max = int(self.cfg.get("vector_max_results") or 2)
             hits = await self.spaces.searcher(
                 session_id, self.embedder.dim, self.embedder
-            ).search(query=query, source="simple_memory", time_range=time_range, date=date_filter, top_k=vector_max)
+            ).search(query=query, source="simple_memory", time_range=time_range, date=date_filter, top_k=10)
+            # 来源加权（日记 3 / 摘要 2 / raw 1）后重排，取 vector_max 条返回
+            def _src_w(f: str) -> float:
+                fl = (f or "").lower()
+                if "diary" in fl:
+                    return 3.0
+                if "summary" in fl:
+                    return 2.0
+                return 1.0
+            hits = sorted(
+                hits, key=lambda h: h.score * _src_w(h.file), reverse=True
+            )[:vector_max]
             for h in hits:
                 ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(h.timestamp))
                 history_hits.append(
@@ -1258,28 +1233,71 @@ class SimpleMemory(Star):
                 ts = time.strftime("%Y%m%d_%H%M%S")
                 shutil.copy2(path, bak_dir / f"{path.stem}_{ts}.md")
         except Exception:
-            logger.exception("simple_memory 小本子备份失败")
+            logger.exception("lite_memory 小本子备份失败")
 
 
     @filter.llm_tool(name="memory_edit")
+    def _read_core_pending(self, session_id: str) -> list:
+        p = self._pending_path(session_id)
+        if not p.is_file():
+            return []
+        raw = p.read_text(encoding="utf-8", errors="ignore").split("\n")
+        return [l.strip() for l in raw if l.strip() and l.strip()[:2] in ("M:", "E:", "D:")]
+
+    def _apply_core_ops(self, text: str, ops: list) -> tuple:
+        applied = 0
+        for line in ops:
+            line = line.strip()
+            if line.startswith("M:"):
+                m = re.match(r"\[([^\]]+)\]\s+(.*)", line[2:])
+                if m:
+                    text, _ = append_text(text, f"[{m.group(1)}] {m.group(2)}")
+                    applied += 1
+            elif line.startswith("E:"):
+                rest = line[2:]
+                old_val = rest.split("⟦改前⟧", 1)[1] if "⟦改前⟧" in rest else ""
+                head = rest.split("⟦改前⟧", 1)[0]
+                em = re.match(r"(\d+):(.*)", head)
+                if em:
+                    target = find_num_by_content(text, old_val) or int(em.group(1))
+                    text, hit = edit_text(text, target, em.group(2))
+                    if hit:
+                        applied += 1
+            elif line.startswith("D:"):
+                rest = line[2:].strip()
+                if "⟦改前⟧" in rest:
+                    num_part, old_val = rest.split("⟦改前⟧", 1)
+                else:
+                    num_part, old_val = rest, ""
+                num = int(num_part.strip()) if num_part.strip().isdigit() else 0
+                if num:
+                    target = find_num_by_content(text, old_val) or num
+                    text, hit = delete_text(text, target)
+                    if hit:
+                        applied += 1
+        return text, applied
+
     async def memory_edit(self, event: AstrMessageEvent, num: int = 0, content: str = "", topic: str = "", name: str = "") -> str:
-        """小本子操作（读/追加/修改/删除/重写 + INDEX 条目操作）。
+        """小本子（MEMORY.md）与索引（INDEX.md）读写，按目的选一种：
 
-        MEMORY.md 操作：
-        - 读取：num=0, content 留空, topic 留空 → 返回 MEMORY.md 全文
-        - 追加：不传 num，content 有内容，传 topic → 新增一条
-        - 修改：传 num + content → 替换该条内容
-        - 删除：传 num，content 留空 → 删掉该条，后续自动重排
-        - 整篇重写（最后的手段）：不传 num，content 为多行全文，topic 留空 → 覆盖整个 MEMORY.md
+        读 → 什么都不传，返回 MEMORY.md 全文（已合并待落地改动，刚写的能看到）。
+        加一条 → topic + content；topic 限小本子话题（身份/关系/偏好）。
+                 写 INDEX（配置/路径/项目）改用 name + content，别拿 topic 撞 INDEX 名。
+        改某条 → num + content。
+        删某条 → num（content 留空）。
+        重写整篇 → 不传 num/topic、content 填多行全文；覆盖全文的逃生门，误覆盖风险高，非清理/大改别用。
+        写 INDEX → name（条目名）+ content，每行一条 [标签]:[内容]，] 必须闭合、可多行多标签；
+                 name 的块不存在会自动新建。例：[8095网关]:[/llama/qwen3.8_gateway.py]
 
-        INDEX 操作：
-        - 写入：传 name（条目名，如"配置"）+ content（[tag]:[内容]）→ 写入 INDEX.md 对应条目块
+        所有写操作先入 pending，/new、/reset 或重启才落盘重建索引；返回值带「待落地」提示，
+        据此确认即可，不必立刻 num=0 重读（读模式已合并 pending）。
+        num 可能因重排/待落地漂移，改/删前拿不准就先 num=0 读一遍取当前 num。
 
         Args:
-            num(number): 条目序号。0 或不传 = 读取/追加/重写模式
-            content(string): 追加/修改时填内容；删除时留空；重写时填完整全文
-            topic(string): 话题类型（仅追加时必填）
-            name(string): INDEX 条目名（如"配置""项目"），定位 INDEX.md 中对应条目块
+            num(number): 条目序号。0/不传 = 读/追加/重写；>0 = 改/删。
+            content(string): 追加/改时填内容；删除时留空；重写时填完整全文。
+            topic(string): 小本子话题（仅追加时用），限 身份/关系/偏好。
+            name(string): INDEX 条目名（配置/路径/项目），写 INDEX 用它。
         """
         session_id = str(event.unified_msg_origin)
         if not self.spaces.is_active(session_id):
@@ -1292,12 +1310,16 @@ class SimpleMemory(Star):
         num = int(num or 0)
         p = self._notebook_path(event)
 
-        # 读取模式
+        # 读取模式（合并 pending 里的 M/E/D 改动，避免读到旧值）
         if num == 0 and not content:
-            if not p.is_file():
+            base = p.read_text(encoding="utf-8", errors="ignore") if p.is_file() else ""
+            text, applied = self._apply_core_ops(base, self._read_core_pending(session_id))
+            if applied:
+                text = renumber_text(text)
+            text = text.strip()
+            if not text:
                 return "小本子还是空的"
-            text = p.read_text(encoding="utf-8", errors="ignore").strip()
-            return text or "小本子还是空的"
+            return text + (f"（含 {applied} 条待落地 pending）" if applied else "")
 
         async with self._notebook_lock:
             old = p.read_text(encoding="utf-8", errors="ignore") if p.is_file() else ""
@@ -1306,9 +1328,9 @@ class SimpleMemory(Star):
             if num > 0 and content:
                 old_content = entry_content_at(old, num)
                 if old_content is None:
-                    return f"没找到第 {num} 条，先读取小本子看现有条目"
+                    return f"第 {num} 条不存在，先读取小本子确认现有条目"
                 self._append_pending(session_id, f"E:{num}:{content.strip()}⟦改前⟧{old_content}")
-                return f"已修改第 {num} 条：{content.strip()}"
+                return f"已修改第 {num} 条（待下次对话触发落地，落地前搜索看不到）：{content.strip()}"
 
             # 删除模式
             if num > 0 and not content:
@@ -1316,24 +1338,22 @@ class SimpleMemory(Star):
                     return "小本子还是空的"
                 old_content = entry_content_at(old, num)
                 if old_content is None:
-                    return f"没找到第 {num} 条，先读取小本子看现有条目"
+                    return f"第 {num} 条不存在，先读取小本子确认现有条目"
                 self._append_pending(session_id, f"D:{num}⟦改前⟧{old_content}")
-                return f"已删除第 {num} 条"
+                return f"已删除第 {num} 条（待下次对话触发落地，落地前搜索看不到）"
 
-            # 追加模式（自动路由：核心→MEMORY.md，索引→INDEX.md）
+            # 追加模式（topic 只认小本子话题；INDEX 走 name）
             if topic:
-                valid_topics = self._memory_topics + self._index_topics
-                if topic not in valid_topics:
-                    return f"未知话题「{topic}」（可选：{'、'.join(valid_topics)}），本次未记录"
-                if topic in self._index_topics:
-                    # 路由到 INDEX.md
-                    return await self._index_edit(session_id, topic, content)
-                # 核心条目 → pending.md（触发时合并入 MEMORY.md）
-                dup = find_dup_num(old, content)
+                if topic not in self._memory_topics:
+                    return f"未知话题「{topic}」（小本子可选：{'、'.join(self._memory_topics)}）；要写 INDEX 请改用 name 参数"
+                body = content.strip()
+                if body.startswith(f"[{topic}]"):
+                    body = body[len(f"[{topic}]"):].lstrip()
+                dup = find_num_by_content(old, body)
                 if dup:
                     return f"小本子已有相同内容（第 {dup} 条），未重复追加"
-                self._append_pending(session_id, f"M:[{topic}] {content.strip()}")
-                return f"已记入小本子：{content.strip()}"
+                self._append_pending(session_id, f"M:[{topic}] {body}")
+                return f"已记入小本子（待下次对话触发落地，落地前搜索看不到）：{body}"
 
             # 整篇重写模式（无 topic，多行 content）
             old_size = len(old.strip())
@@ -1347,13 +1367,14 @@ class SimpleMemory(Star):
             p.write_text(new_content, encoding="utf-8")
             return f"已重写小本子。{warning}"
 
-        return "请检查参数：需要 num+content（修改）、num（删除）、topic+content（追加）或多行content（重写）"
+        return "请检查参数：读取=都不传；追加=topic+content；改=num+content；删=num（content 留空）；重写=多行content；INDEX=name+content"
 
     async def _index_edit(self, session_id: str, entry_name: str, content: str) -> str:
         """INDEX.md 条目操作：解析 [tag]:[内容] 写入对应条目块。"""
         p = self.spaces.path(session_id) / "INDEX.md"
         # 解析 content 中的 [tag]:[内容]
         tag_lines = []
+        unmatched = []
         for line in content.strip().split("\n"):
             line = line.strip()
             if not line:
@@ -1361,8 +1382,14 @@ class SimpleMemory(Star):
             m = re.match(r"\[([^\]]+)\]:\[(.*)\]", line)
             if m:
                 tag_lines.append((m.group(1), m.group(2)))
+            else:
+                unmatched.append(line)
         if not tag_lines:
-            return "INDEX 写入失败：content 中未找到 [tag]:[内容] 格式的行"
+            sample = unmatched[0] if unmatched else "(content 为空)"
+            return (
+                "INDEX 写入失败：每行须为 [标签]:[内容] 且 ] 需闭合，"
+                f"如 [8095网关]:[/llama/qwen3.8_gateway.py]。未匹配行：{sample}"
+            )
 
         # 读取现有 INDEX.md
         if p.is_file():
@@ -1380,6 +1407,7 @@ class SimpleMemory(Star):
                 block_start = i
                 break
 
+        is_new = block_start is None
         if block_start is None:
             # 新建条目块：正文直写（不进注入、不炸 KV），摘要行用 @pending 占位、tag 走 pending（flush 时替换成摘要行）
             body_lines = [f"[{t}]:[{c}]" for t, c in tag_lines]
@@ -1442,11 +1470,14 @@ class SimpleMemory(Star):
 
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8")
-        return f"INDEX [{entry_name}] 已更新: {', '.join(t for t, _ in tag_lines)}"
+        tags = ", ".join(t for t, _ in tag_lines)
+        if is_new:
+            return f"INDEX [{entry_name}] 已新建块: {tags}（摘要行待 /new 或重启后生成）"
+        return f"INDEX [{entry_name}] 已更新: {tags}"
 
     @filter.command_group("mem")
     def mem_group(self) -> None:
-        """simple_memory 记忆管理指令组 /mem"""
+        """lite_memory 记忆管理指令组 /mem"""
         pass
 
     @mem_group.command("status", priority=10)

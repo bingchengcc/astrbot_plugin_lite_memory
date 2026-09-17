@@ -43,14 +43,6 @@ def seconds_until_next(digest_time: str, now: datetime) -> float:
     return (target - now).total_seconds()
 
 
-def most_recent_past_target(digest_time: str, now: datetime) -> datetime:
-    h, m = parse_digest_time(digest_time)
-    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
-    if target >= now:
-        target -= timedelta(days=1)
-    return target
-
-
 def calc_output_reserve(ctx: int) -> int:
     """S11: 输出预留——>=20000 固定 2000，<20000 线性适配（4096→500, 20000→2000）"""
     if ctx >= 20000:
@@ -111,10 +103,10 @@ class DigestWorker:
         _dbg(f"start() called digest_time={self.digest_time}")
         if self._task is None:
             self._task = asyncio.create_task(
-                self._loop(), name="simple_memory_digest"
+                self._loop(), name="lite_memory_digest"
             )
             logger.info(
-                f"simple_memory digest worker 启动（每日 {self.digest_time}）"
+                f"lite_memory digest worker 启动（每日 {self.digest_time}）"
             )
 
     async def stop(self) -> None:
@@ -129,7 +121,7 @@ class DigestWorker:
                 await t
             except BaseException:
                 pass
-        logger.info("simple_memory digest worker 停止")
+        logger.info("lite_memory digest worker 停止")
 
     async def _loop(self) -> None:
         _dbg("_loop 任务开始运行")
@@ -142,7 +134,7 @@ class DigestWorker:
                 except asyncio.CancelledError:
                     raise
                 except Exception:
-                    logger.exception("simple_memory 启动补跑检查异常，继续运行")
+                    logger.exception("lite_memory 启动补跑检查异常，继续运行")
                     _dbg("启动补跑检查异常")
             delay = seconds_until_next(self.digest_time, datetime.now())
             await asyncio.sleep(delay)
@@ -151,7 +143,7 @@ class DigestWorker:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("simple_memory digest 运行失败")
+                logger.exception("lite_memory digest 运行失败")
 
     async def _startup_catchup(self) -> None:
         """启动检测：文件名日期早于今天的 raw md 有实际内容且无对应 diary → 补写日记。"""
@@ -185,7 +177,7 @@ class DigestWorker:
                 if diary_path.is_file() and diary_path.stat().st_size > 0:
                     continue
                 logger.info(
-                    f"simple_memory 启动补跑：{sid[:16]} {day_str} 有raw无diary"
+                    f"lite_memory 启动补跑：{sid[:16]} {day_str} 有raw无diary"
                 )
                 _dbg(f"启动补跑 {sid[:24]} {day_str} raw={len(raw_text)}字")
                 system = await self._diary_system(datetime.fromisoformat(day_str))
@@ -217,11 +209,11 @@ class DigestWorker:
                             f"## [diary] {sid[:24]} [补跑]\n" + diary_text + "\n",
                         )
                     logger.info(
-                        f"simple_memory {sid[:16]} {day_str} 补跑日记 {_dl} 字"
+                        f"lite_memory {sid[:16]} {day_str} 补跑日记 {_dl} 字"
                     )
                 else:
                     logger.warning(
-                        f"simple_memory {sid[:16]} {day_str} 补跑日记为空，跳过"
+                        f"lite_memory {sid[:16]} {day_str} 补跑日记为空，跳过"
                     )
 
     async def digest(self, now: datetime | None = None) -> None:
@@ -241,7 +233,7 @@ class DigestWorker:
                 s for s in sessions if any(f in s for f in self.session_whitelist)
             ]
         logger.info(
-            f"simple_memory digest 开始：{len(sessions)} 个会话，目标文件 {day}.md"
+            f"lite_memory digest 开始：{len(sessions)} 个会话，目标文件 {day}.md"
         )
         _dbg(f"digest 开始 {len(sessions)} 会话 day={day}")
 
@@ -251,12 +243,12 @@ class DigestWorker:
             try:
                 await self._digest_session(sid, now, raw_target, target)
             except Exception:
-                logger.exception(f"simple_memory digest 处理 {sid[:16]} 失败")
+                logger.exception(f"lite_memory digest 处理 {sid[:16]} 失败")
         try:
             await self._expire_raw(now)
         except Exception:
-            logger.exception("simple_memory 原文过期清理失败")
-        logger.info("simple_memory digest 完成")
+            logger.exception("lite_memory 原文过期清理失败")
+        logger.info("lite_memory digest 完成")
 
     async def _digest_session(
         self, sid: str, now: datetime, raw_target, target
@@ -268,7 +260,7 @@ class DigestWorker:
             window_h = (now.timestamp() - wm) / 3600
             if window_h > 36:
                 logger.warning(
-                    f"simple_memory {sid[:16]} digest 窗口 {window_h:.1f}h"
+                    f"lite_memory {sid[:16]} digest 窗口 {window_h:.1f}h"
                     "（>36h，疑似停机后补跑）"
                 )
 
@@ -350,7 +342,7 @@ class DigestWorker:
             if diary:
                 body = diary
                 logger.info(
-                    f"simple_memory {sid[:16]} 日记生成 {len(diary)} 字"
+                    f"lite_memory {sid[:16]} 日记生成 {len(diary)} 字"
                 )
             else:
                 fallback = summary_text if summary_text else (
@@ -359,7 +351,7 @@ class DigestWorker:
                 body = (
                     f"[日记生成失败/空返回，以摘要充当 {day_str} 记录]\n{fallback}"
                 )
-                logger.warning(f"simple_memory {sid[:16]} 日记为空，摘要直接落盘")
+                logger.warning(f"lite_memory {sid[:16]} 日记为空，摘要直接落盘")
             async with self.lock:
                 self.diary_file_for(sid).append_to(
                     target, f"## [diary] {sid[:24]}\n{body}\n"
@@ -367,6 +359,46 @@ class DigestWorker:
             await self.store.update(
                 sid, summary="", summary_states=[], summary_consumed=True
             )
+        else:
+            day_str = now.date().isoformat()
+            raw_text = ""
+            try:
+                for rf in sorted(raw_target.parent.glob("raw*.md")):
+                    if rf.is_file():
+                        raw_text += rf.read_text(encoding="utf-8", errors="ignore").strip()
+                        if len(raw_text) >= CATCHUP_RAW_CAP:
+                            break
+            except Exception:
+                pass
+            raw_text = raw_text[:CATCHUP_RAW_CAP].strip()
+            if raw_text:
+                _dbg(f"无states降级 {sid[:24]} raw={len(raw_text)}字")
+                system_prompt = await self._diary_system(now)
+                prompt = (
+                    f"以下是 {day_str} 当天的对话原文记录，请据此写日记："
+                    + "\n\n"
+                    + raw_text
+                )
+                diary = await self._llm(system_prompt, prompt)
+                _dl = len(diary or "")
+                _dbg(f"无states降级 llm 完成 {sid[:24]} {_dl}字")
+                if diary:
+                    async with self.lock:
+                        self.diary_file_for(sid).append_to(
+                            target, f"## [diary] {sid[:24]}\n{diary}\n"
+                        )
+                    logger.info(
+                        f"lite_memory {sid[:16]} 无states降级日记 {_dl} 字"
+                    )
+                    await self.store.update(
+                        sid, summary="", summary_states=[], summary_consumed=True
+                    )
+                else:
+                    logger.warning(
+                        f"lite_memory {sid[:16]} 无states降级日记为空，跳过"
+                    )
+            else:
+                _dbg(f"无states且无raw {sid[:24]}，跳过日记")
 
         _dbg(f"store 更新 {sid[:24]} wm={int(now.timestamp())}")
         await self.store.update(sid, watermark_ts=int(now.timestamp()))
@@ -496,7 +528,7 @@ class DigestWorker:
                 provider_id = ""
         if not provider_id:
             logger.warning(
-                "simple_memory 日记 LLM 提供商未解析"
+                "lite_memory 日记 LLM 提供商未解析"
                 "（配置 diary_provider_id 或 AstrBot 主 LLM）"
             )
             return ""
@@ -507,7 +539,7 @@ class DigestWorker:
                 prompt=prompt,
             )
         except Exception as e:
-            logger.warning(f"simple_memory 日记 LLM 调用失败: {e}")
+            logger.warning(f"lite_memory 日记 LLM 调用失败: {e}")
             return ""
         return (getattr(resp, "completion_text", "") or "").strip()
 
@@ -536,7 +568,7 @@ class DigestWorker:
                 if p is not None:
                     card = (p.system_prompt or "").strip()
             except Exception as e:
-                logger.warning(f"simple_memory 人设卡获取失败: {e}")
+                logger.warning(f"lite_memory 人设卡获取失败: {e}")
         self._persona_card = card
         return card
 
@@ -565,11 +597,11 @@ class DigestWorker:
                     for rf in raws:
                         rf.unlink()
                     logger.info(
-                        f"simple_memory 原文过期留日记 {sid[:16]}/{day_str}（删 {len(raws)} 个 raw）"
+                        f"lite_memory 原文过期留日记 {sid[:16]}/{day_str}（删 {len(raws)} 个 raw）"
                     )
                 else:
                     import shutil
                     shutil.rmtree(sub)
                     logger.info(
-                        f"simple_memory 原文过期无日记，删除 {sid[:16]}/{day_str}/"
+                        f"lite_memory 原文过期无日记，删除 {sid[:16]}/{day_str}/"
                     )
