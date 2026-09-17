@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.3 (2026-09-17)
+
+### Fixed
+- AstrBot Cloud LLM Guard 整改：去掉对 Python 内置 `logging` 的依赖（删 `import logging` 与自定义 `_ResetLogHandler`），日志统一走 `astrbot.api` 的 `logger`
+
+### Changed
+- `/new`、`/reset` 时的 pending 落地不再靠日志监听，改为依赖启动 + 压缩两个既有触发点（pending 持久化在 pending.md，不会丢）
+
 ## 0.4.2 (2026-09-17)
 
 ### Added

@@ -30,27 +30,6 @@ from .debug_logger import _dbg
 INJECT_START = "\n# Memory Context\n\n"
 
 
-import logging
-
-
-class _ResetLogHandler(logging.Handler):
-    """抓日志 /new 和 /reset，把所有 session 的 pending 落地到 MEMORY.md 和 INDEX.md。"""
-
-    def __init__(self, plugin: "SimpleMemory"):
-        super().__init__(level=logging.INFO)
-        self.plugin = plugin
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            msg = record.getMessage()
-            if "Switched to new conversation" in msg or "Conversation reset successfully" in msg:
-                for d in self.plugin.spaces.existing_dirs():
-                    self.plugin._flush_pending(d)
-                _dbg("log handler: 落地完成")
-        except Exception:
-            pass
-
-
 def _scan_cmd_handlers() -> None:
     try:
         from astrbot.core.star.star_handler import (
@@ -182,10 +161,6 @@ class SimpleMemory(Star):
         for d in self.spaces.existing_dirs():
             self._flush_pending(d)
 
-        # 日志监听：抓 /new 和 /reset 触发注入
-        self._log_handler = _ResetLogHandler(self)
-        logger.addHandler(self._log_handler)
-
         if not use_embedding:
             logger.info("lite_memory: use_embedding=false，跳过向量检索（纯 grep 模式）")
             _dbg("initialize() done (no embedding)")
@@ -263,9 +238,6 @@ class SimpleMemory(Star):
         if self.watcher:
             await self.watcher.stop()
             self.watcher = None
-        if hasattr(self, '_log_handler') and self._log_handler:
-            logger.removeHandler(self._log_handler)
-            self._log_handler = None
         if self._embedder_task and not self._embedder_task.done():
             self._embedder_task.cancel()
         self._embedder_task = None
@@ -282,7 +254,7 @@ class SimpleMemory(Star):
             "name": "astrbot_plugin_lite_memory",
             "author": "冰城cc",
             "description": "三层记忆：向量检索 + system prompt 注入 + 每日日记 + 共同小本子",
-            "version": "0.4.2",
+            "version": "0.4.3",
         }
 
     def _vdb_for(self, session_id: str):
