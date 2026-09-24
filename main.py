@@ -1208,7 +1208,6 @@ class SimpleMemory(Star):
             logger.exception("lite_memory 小本子备份失败")
 
 
-    @filter.llm_tool(name="memory_edit")
     def _read_core_pending(self, session_id: str) -> list:
         p = self._pending_path(session_id)
         if not p.is_file():
@@ -1249,6 +1248,7 @@ class SimpleMemory(Star):
                         applied += 1
         return text, applied
 
+    @filter.llm_tool(name="memory_edit")
     async def memory_edit(self, event: AstrMessageEvent, num: int = 0, content: str = "", topic: str = "", name: str = "") -> str:
         """小本子（MEMORY.md）与索引（INDEX.md）读写，按目的选一种：
 

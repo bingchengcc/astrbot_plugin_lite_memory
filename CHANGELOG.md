@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.4 (2026-09-24)
+
+### Fixed
+- `memory_edit` 调用必炸（0.4.2 引入）：`@filter.llm_tool(name="memory_edit")` 误贴在内部辅助函数 `_read_core_pending` 上，真正的处理函数 `memory_edit` 无装饰器，框架把 event 塞进 `session_id` 形参，`dir_name_for` 对 event 调 `replace` 直接 `AttributeError`；装饰器挪回 `memory_edit`，`_read_core_pending` 还原为内部方法
+
 ## 0.4.3 (2026-09-17)
 
 ### Fixed
