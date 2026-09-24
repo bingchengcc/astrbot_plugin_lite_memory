@@ -9,7 +9,7 @@ AstrBot 轻量记忆插件。AI 有自己的小本子、日记和翻旧账能力
 - **日记**：AI 用自己人设写的一天，向量检索
 - **原文**：逐字落盘，grep 秒搜
 - **按会话隔离**：每个会话独立一套，互不串味
-- **零外部依赖**：chromadb 跑本地，不用额外服务
+- **零外部向量依赖**：chromadb 跑本地，不用额外服务
 
 ## 工作原理
 
@@ -23,7 +23,7 @@ AstrBot 轻量记忆插件。AI 有自己的小本子、日记和翻旧账能力
   └ 跨天压缩: 当天 states >16k 时触发，新天从摘要续写
 
 每请求（注入）
-  └ system prompt += 小本子全文 + 记忆指针 + 边界说明
+  └ system prompt += 小本子正式条目（⟦pending⟧ 带标行未转正，不进 prompt） + 记忆指针 + 边界说明
 
 按需（召回）
   └ memory_search → 向量层(diary 语义, 时间预过滤) + grep 层(纯Python, 文件分组+行号+上下文)
@@ -31,15 +31,17 @@ AstrBot 轻量记忆插件。AI 有自己的小本子、日记和翻旧账能力
 
 ## KV 缓存策略
 
-小本子的写入先进入 pending 缓冲，不立即更新系统提示词，以减少 KV 缓存破坏。
+小本子的写入**直接落盘** MEMORY.md：新条目行尾带 `⟦pending⟧` 标，注入时过滤带标行——prompt 只含正式条目，会话中随便写，注入文本逐字节不变，KV 缓存不破坏。搜索与读取立即可见带标条目（标签自带"未落地"语义）。
 
-**注入触发时机：**
+**转正时机**（去标进 prompt）：
 
-- **/reset 和 /new**：通过抓日志关键词 `Switched to new conversation` 和 `Conversation reset successfully` 触发注入
-- **启动 AstrBot**：注入 pending 中未注入的内容
-- **压缩**：压缩后第一句会额外消耗一次 KV 输入用于更新系统提示词（压缩前没有可抓到的钩子或日志）
+- **/new 和 /reset**：落地
+- **启动 AstrBot**：落地
+- **压缩检测命中**：落地（压缩后第一句本来就要消耗一次 KV 输入更新系统提示词）
 
-**设计收益：** 相比工具直接写入小本子并立即更新系统提示词，本策略能省大量 token 输入，且最小化对 KV 缓存的破坏。全程仅有压缩时会额外消耗一次 KV 输入。
+**例外**：修改已转正（正式）条目时内容直接生效，下一轮 prompt 更新、失效一次 KV——模型上一轮看到的知识变了，该失效。
+
+**设计收益：** 相比写入即改系统提示词，本策略会话中零 KV 破坏、写入立即可搜，且 num = 文件行号稳定不漂移。
 
 ## 安装
 
@@ -63,7 +65,7 @@ git clone https://github.com/bingchengcc/astrbot_plugin_lite_memory.git data/plu
 
 **注意**：安装/更新后需完整重启 AstrBot（API 重载可能导致事件钩子绑定到旧实例）。
 
-**前置**：在 AstrBot WebUI 提供商管理中配置一个 **Embedding 类型**提供商（用于向量检索）。
+**可选**：在 AstrBot WebUI 提供商管理中配置一个 **Embedding 类型**提供商启用向量检索；不配置也能用（纯 grep 搜索，向量层自动跳过）。
 
 ## 配置
 
@@ -89,8 +91,6 @@ git clone https://github.com/bingchengcc/astrbot_plugin_lite_memory.git data/plu
 | `grep_max_files` | 20 | grep 搜索最大文件数 |
 | `grep_max_results` | 5 | grep 最大返回条数 |
 | `vector_max_results` | 2 | 向量检索最大返回条数 |
-| `auto_compress_notebook` | false | 小本子超限时自动压缩旧条目 |
-| `auto_compress_threshold` | 2000 | 小本子自动压缩触发阈值（token） |
 
 ## 存储布局
 
