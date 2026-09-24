@@ -87,12 +87,18 @@ class SessionStore:
             with self._file_lock:
                 current_mtime = self._file_mtime()
                 if current_mtime > self._last_mtime + 0.001:
+                    try:
+                        disk = json.loads(self.path.read_text(encoding="utf-8"))
+                        if isinstance(disk, dict):
+                            for sid, entry in disk.items():
+                                if sid not in self._data and isinstance(entry, dict):
+                                    self._data[sid] = entry
+                    except Exception:
+                        pass
                     logger.debug(
-                        f"session_store CAS skip: mtime {current_mtime:.3f} "
+                        f"session_store CAS merge: mtime {current_mtime:.3f} "
                         f"> last_read {self._last_mtime:.3f}"
                     )
-                    self._last_mtime = current_mtime
-                    return
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = self.path.with_suffix(".tmp")
                 tmp.write_text(

@@ -1,6 +1,6 @@
 name: astrbot_plugin_lite_memory
 display_name: 轻量记忆
-desc: AI 有自己的小本子、日记和翻旧账能力，零外部依赖
+desc: AI 有自己的小本子、日记和翻旧账能力，零外部向量依赖
 short_desc: 轻量记忆，小本子+日记+原文
 author: 冰城cc
 version: 0.4.4

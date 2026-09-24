@@ -126,17 +126,5 @@
     "default": 2,
     "description": "向量检索最大返回条数",
     "hint": "diary 语义搜索单次最多返回多少条结果。"
-  },
-  "auto_compress_notebook": {
-    "type": "bool",
-    "default": false,
-    "description": "小本子超限时自动压缩旧条目",
-    "hint": "不建议开启。开启后小本子注入 system prompt 超限时，自动用 LLM 把最旧 5 条合并为 1 条摘要。与日记供应商相同。"
-  },
-  "auto_compress_threshold": {
-    "type": "int",
-    "default": 2000,
-    "description": "小本子自动压缩触发阈值（token）",
-    "hint": "小本子注入 system prompt 的 token 估算超过此值时触发压缩。中文约 1 字=1 token。"
   }
 }

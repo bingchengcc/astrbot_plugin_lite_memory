@@ -37,14 +37,14 @@ class VectorDB:
         try:
             self.col.delete(where={"file": file})
         except Exception:
-            logger.exception(f"simple_memory 删除文件向量失败: {file}")
+            logger.exception(f"lite_memory 删除文件向量失败: {file}")
             raise
 
     def get_file_hash(self, file: str) -> str | None:
         try:
             batch = self.col.get(where={"file": file}, limit=1, include=["metadatas"])
         except Exception:
-            logger.exception(f"simple_memory 读取文件哈希失败: {file}")
+            logger.exception(f"lite_memory 读取文件哈希失败: {file}")
             return None
         metas = batch.get("metadatas") or []
         if metas and metas[0]:

@@ -2,8 +2,21 @@
 
 ## 0.4.4 (2026-09-24)
 
+### Added
+- pending 标签化（架构小升级）：小本子写操作直接落 MEMORY.md，新条目行尾带 `⟦pending⟧` 标；注入时过滤带标行（prompt 只含正式条目，KV 缓存不破坏），搜索/读取立即可见，/new、/reset 或重启时去标转正。num = 文件行号，不再漂移；改带标条目保标、改正式条目即正式、整篇重写剥全部标。INDEX 维持原两段式（@pending 占位 + I: 操作），存量 pending.md 的 M/E/D 操作由 flush 旧路径兼容落地
+
 ### Fixed
 - `memory_edit` 调用必炸（0.4.2 引入）：`@filter.llm_tool(name="memory_edit")` 误贴在内部辅助函数 `_read_core_pending` 上，真正的处理函数 `memory_edit` 无装饰器，框架把 event 塞进 `session_id` 形参，`dir_name_for` 对 event 调 `replace` 直接 `AttributeError`；装饰器挪回 `memory_edit`，`_read_core_pending` 还原为内部方法
+- 启动补跑 23:30–24:00 窗口漏当天日记：补跑扫描用自然日比较 `day_str < now.date()`，改为 `cycle_file_date` 结算日口径，刚结算完的旧日不再被误判为"进行中"而跳过
+- 向量检索裸炸：`memory_search` 向量层无异常保护，embedding HTTP 失败或换 embedding 模型后维度不匹配时异常直接抛给工具循环；整体 try/except，失败时跳过向量层、grep 层照常出结果
+- session_store CAS miss 静默丢写：mtime 更新后直接 return，重载/双实例场景下其他写者的 session 条目被抹掉；改为 miss 时重读磁盘合并缺失条目再写回
+- memory_edit 改/删与读视图不一致：读取返回含 pending 的合并视图（带 num），改/删却按裸磁盘校验，刚追加未落地的条目读得到改不到；改/删校验、改前值捕获与追加重复判定统一改用合并视图
+- 日志前缀残留 `simple_memory` / `[SimpleMemory]`（main.py / watcher / vector_db 三处）统一为 `lite_memory`
+
+### Changed
+- `_conf_schema.json` 删除孤儿配置 `auto_compress_notebook` / `auto_compress_threshold`（0.4.0 删调用点、0.4.2 删函数定义后 schema 漏删）
+- metadata.yaml 描述"零外部依赖"更正为"零外部向量依赖"（chromadb/filelock/watchdog 为外部依赖）
+- `info()` 版本 0.4.3 → 0.4.4
 
 ## 0.4.3 (2026-09-17)
 

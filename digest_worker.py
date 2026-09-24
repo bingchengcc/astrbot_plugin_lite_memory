@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from astrbot.api import logger
 
-from .daily_md import DEFAULT_DIGEST_TIME, parse_digest_time
+from .daily_md import DEFAULT_DIGEST_TIME, cycle_file_date, parse_digest_time
 
 TAIL_RAW_CAP = 4000
 CATCHUP_RAW_CAP = 8000
@@ -147,7 +147,7 @@ class DigestWorker:
 
     async def _startup_catchup(self) -> None:
         """启动检测：文件名日期早于今天的 raw md 有实际内容且无对应 diary → 补写日记。"""
-        today = datetime.now().date().isoformat()
+        today = cycle_file_date(datetime.now(), self.digest_time)
         sessions = await self.store.keys()
         if self.session_whitelist:
             sessions = [

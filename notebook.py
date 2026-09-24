@@ -2,6 +2,12 @@ import re
 
 NOTE_ENTRY_RE = re.compile(r"^(\d+)\. \[([^\]]+)\] (.*)$")
 
+PENDING_TAG = "⟦pending⟧"
+
+
+def strip_pending_tag(text: str) -> str:
+    return text.replace(PENDING_TAG, "").rstrip()
+
 
 def parse_entries(text: str) -> list[dict]:
     entries = []
@@ -85,6 +91,6 @@ def find_num_by_content(text: str, content: str) -> int:
     if not target:
         return 0
     for e in parse_entries(text):
-        if e["content"].strip() == target:
+        if strip_pending_tag(e["content"]).strip() == target:
             return e["num"]
     return 0

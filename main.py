@@ -16,7 +16,7 @@ from astrbot.core.star.filter.command import GreedyStr
 
 from .digest_worker import DigestWorker
 from .daily_md import DEFAULT_DIGEST_TIME, cycle_file_date
-from .notebook import append_text, delete_text, edit_text, entry_content_at, find_num_by_content, parse_entries, renumber_text
+from .notebook import PENDING_TAG, append_text, delete_text, edit_text, entry_content_at, find_num_by_content, parse_entries, renumber_text, strip_pending_tag
 from .memory_store.chunker import Chunker
 from .memory_store.embedder import Embedder
 from .session_store import SessionStore
@@ -73,7 +73,7 @@ class SimpleMemory(Star):
             clamped = max(max_ctx - 32, 128)
             if chunk_size > clamped:
                 logger.warning(
-                    f"[SimpleMemory] chunk_size {chunk_size} 超过 "
+                    f"[lite_memory] chunk_size {chunk_size} 超过 "
                     f"embed_max_ctx {max_ctx}，钳制为 {clamped}"
                 )
                 chunk_size = clamped
@@ -254,7 +254,7 @@ class SimpleMemory(Star):
             "name": "astrbot_plugin_lite_memory",
             "author": "冰城cc",
             "description": "三层记忆：向量检索 + system prompt 注入 + 每日日记 + 共同小本子",
-            "version": "0.4.3",
+            "version": "0.4.4",
         }
 
     def _vdb_for(self, session_id: str):
@@ -422,12 +422,15 @@ class SimpleMemory(Star):
         if self.spaces.is_active(session_id):
             parts.append(self._pointer_block(session_id))
             parts.append(self._notebook_block())
-            # S1: 注入 MEMORY.md 全文
+            # S1: 注入 MEMORY.md（过滤 ⟦pending⟧ 带标行：未转正条目不进 prompt，KV 缓存不破坏）
             nb = self.spaces.notebook_path(session_id)
             if nb.is_file():
                 nb_text = nb.read_text(encoding="utf-8", errors="ignore").strip()
                 if nb_text:
-                    parts.append(f"## {self.notebook_name}\n{nb_text}")
+                    kept = [l for l in nb_text.split("\n") if PENDING_TAG not in l]
+                    kept_text = "\n".join(kept).strip()
+                    if kept_text:
+                        parts.append(f"## {self.notebook_name}\n{kept_text}")
             # S1: 注入 INDEX.md 摘要行
             idx = self.spaces.path(session_id) / "INDEX.md"
             if idx.is_file():
@@ -600,14 +603,9 @@ class SimpleMemory(Star):
         p.write_text(existing + line + "\n", encoding="utf-8")
 
     def _flush_pending(self, session_id: str) -> bool:
-        """Flush pending.md → MEMORY.md (core) + INDEX.md summary (index tags)."""
+        """Flush legacy pending.md (M/E/D/I) + 剥 MEMORY.md ⟦pending⟧ 标转正 → INDEX.md summary tags."""
         p = self._pending_path(session_id)
-        if not p.is_file():
-            return False
-        content = p.read_text(encoding="utf-8", errors="ignore").strip()
-        if not content:
-            p.write_text("", encoding="utf-8")
-            return False
+        content = p.read_text(encoding="utf-8", errors="ignore").strip() if p.is_file() else ""
         flushed = False
         nb_path = self.spaces.notebook_path(session_id)
         nb_old = nb_path.read_text(encoding="utf-8", errors="ignore") if nb_path.is_file() else ""
@@ -661,6 +659,19 @@ class SimpleMemory(Star):
                     entry, tag = parts
                     self._add_tag_to_summary(session_id, entry, tag)
                     flushed = True
+        # 0.4.4 标签方案：剥 ⟦pending⟧ 标转正（落地时机不变，启动//new//reset/压缩触发）
+        if PENDING_TAG in nb_old:
+            stripped = 0
+            new_lines = []
+            for l in nb_old.split("\n"):
+                if PENDING_TAG in l:
+                    l = l.replace(PENDING_TAG, "").rstrip()
+                    stripped += 1
+                new_lines.append(l)
+            nb_old = "\n".join(new_lines)
+            nb_modified = True
+            flushed = True
+            ops_lines.append(f"L:{stripped} pending 标转正")
         if nb_modified:
             self._notebook_bak(nb_path)
             nb_path.write_text(renumber_text(nb_old), encoding="utf-8")
@@ -674,7 +685,8 @@ class SimpleMemory(Star):
             if len(all_ops) > 200:
                 all_ops = all_ops[-200:]
             ops_path.write_text("\n".join(all_ops) + "\n", encoding="utf-8")
-        p.write_text("", encoding="utf-8")
+        if p.is_file():
+            p.write_text("", encoding="utf-8")
         if flushed:
             self._invalidate_session_cache(session_id)
         return flushed
@@ -902,9 +914,13 @@ class SimpleMemory(Star):
         history_hits: list[str] = []
         if src in ("all", "diary") and self.embedder:
             vector_max = int(self.cfg.get("vector_max_results") or 2)
-            hits = await self.spaces.searcher(
-                session_id, self.embedder.dim, self.embedder
-            ).search(query=query, source="simple_memory", time_range=time_range, date=date_filter, top_k=10)
+            try:
+                hits = await self.spaces.searcher(
+                    session_id, self.embedder.dim, self.embedder
+                ).search(query=query, source="simple_memory", time_range=time_range, date=date_filter, top_k=10)
+            except Exception as e:
+                logger.exception(f"lite_memory 向量检索失败，本层跳过（grep 层不受影响）: {e}")
+                hits = []
             # 来源加权（日记 3 / 摘要 2 / raw 1）后重排，取 vector_max 条返回
             def _src_w(f: str) -> float:
                 fl = (f or "").lower()
@@ -1261,9 +1277,10 @@ class SimpleMemory(Star):
         写 INDEX → name（条目名）+ content，每行一条 [标签]:[内容]，] 必须闭合、可多行多标签；
                  name 的块不存在会自动新建。例：[8095网关]:[/llama/qwen3.8_gateway.py]
 
-        所有写操作先入 pending，/new、/reset 或重启才落盘重建索引；返回值带「待落地」提示，
-        据此确认即可，不必立刻 num=0 重读（读模式已合并 pending）。
-        num 可能因重排/待落地漂移，改/删前拿不准就先 num=0 读一遍取当前 num。
+        写操作直接落盘：新条目行尾带 ⟦pending⟧ 标（注入按未落地处理不占 prompt，
+        /new、/reset 或重启时去标转正；搜索与读取立即可见）。改带标条目保标，改正式条目即正式生效。
+        返回值带「待转正」提示，据此确认即可，不必立刻 num=0 重读。
+        num = 文件行号，稳定不漂移。
 
         Args:
             num(number): 条目序号。0/不传 = 读/追加/重写；>0 = 改/删。
@@ -1282,7 +1299,7 @@ class SimpleMemory(Star):
         num = int(num or 0)
         p = self._notebook_path(event)
 
-        # 读取模式（合并 pending 里的 M/E/D 改动，避免读到旧值）
+        # 读取模式（文件即真源；迁移期叠加 legacy pending.md 的 M/E/D 改动）
         if num == 0 and not content:
             base = p.read_text(encoding="utf-8", errors="ignore") if p.is_file() else ""
             text, applied = self._apply_core_ops(base, self._read_core_pending(session_id))
@@ -1291,28 +1308,36 @@ class SimpleMemory(Star):
             text = text.strip()
             if not text:
                 return "小本子还是空的"
-            return text + (f"（含 {applied} 条待落地 pending）" if applied else "")
+            return text + (f"（另有 {applied} 条 legacy pending 未落地）" if applied else "")
 
         async with self._notebook_lock:
             old = p.read_text(encoding="utf-8", errors="ignore") if p.is_file() else ""
 
-            # 修改模式
+            # 修改模式（文件即真源：带标 pending 条目按行号可改，改后保标）
             if num > 0 and content:
                 old_content = entry_content_at(old, num)
                 if old_content is None:
                     return f"第 {num} 条不存在，先读取小本子确认现有条目"
-                self._append_pending(session_id, f"E:{num}:{content.strip()}⟦改前⟧{old_content}")
-                return f"已修改第 {num} 条（待下次对话触发落地，落地前搜索看不到）：{content.strip()}"
+                new_content = content.strip()
+                if strip_pending_tag(old_content) != old_content:
+                    new_content = f"{new_content} {PENDING_TAG}"
+                new_text, hit = edit_text(old, num, new_content)
+                if not hit:
+                    return f"第 {num} 条不存在，先读取小本子确认现有条目"
+                p.write_text(new_text, encoding="utf-8")
+                note = "（仍带 pending 标，/new、/reset 或重启时转正）" if PENDING_TAG in new_content else "（已正式生效）"
+                return f"已修改第 {num} 条{note}：{content.strip()}"
 
             # 删除模式
             if num > 0 and not content:
-                if not p.is_file():
-                    return "小本子还是空的"
                 old_content = entry_content_at(old, num)
                 if old_content is None:
                     return f"第 {num} 条不存在，先读取小本子确认现有条目"
-                self._append_pending(session_id, f"D:{num}⟦改前⟧{old_content}")
-                return f"已删除第 {num} 条（待下次对话触发落地，落地前搜索看不到）"
+                new_text, hit = delete_text(old, num)
+                if not hit:
+                    return f"第 {num} 条不存在，先读取小本子确认现有条目"
+                p.write_text(new_text, encoding="utf-8")
+                return f"已删除第 {num} 条（已正式生效）"
 
             # 追加模式（topic 只认小本子话题；INDEX 走 name）
             if topic:
@@ -1324,10 +1349,11 @@ class SimpleMemory(Star):
                 dup = find_num_by_content(old, body)
                 if dup:
                     return f"小本子已有相同内容（第 {dup} 条），未重复追加"
-                self._append_pending(session_id, f"M:[{topic}] {body}")
-                return f"已记入小本子（待下次对话触发落地，落地前搜索看不到）：{body}"
+                new_text, _ = append_text(old, f"[{topic}] {body} {PENDING_TAG}")
+                p.write_text(new_text, encoding="utf-8")
+                return f"已记入小本子（带 pending 标，/new、/reset 或重启时转正；搜索立即可见）：{body}"
 
-            # 整篇重写模式（无 topic，多行 content）
+            # 整篇重写模式（无 topic，多行 content；重写即正式声明，剥全部标）
             old_size = len(old.strip())
             new_size = len(content.strip())
             if old.strip() and new_size < old_size * 0.5:
@@ -1335,9 +1361,9 @@ class SimpleMemory(Star):
             else:
                 warning = ""
             self._notebook_bak(p)
-            new_content = renumber_text(content.strip() + "\n")
+            new_content = renumber_text(strip_pending_tag(content.strip() + "\n"))
             p.write_text(new_content, encoding="utf-8")
-            return f"已重写小本子。{warning}"
+            return f"已重写小本子（含未落地条目则一并转正）。{warning}"
 
         return "请检查参数：读取=都不传；追加=topic+content；改=num+content；删=num（content 留空）；重写=多行content；INDEX=name+content"
 
