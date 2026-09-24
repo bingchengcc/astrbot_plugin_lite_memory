@@ -14,6 +14,8 @@
 - 日志前缀残留 `simple_memory` / `[SimpleMemory]`（main.py / watcher / vector_db 三处）统一为 `lite_memory`
 
 ### Changed
+- 移除 `_scan_cmd_handlers`（启动时扫 core `star_handlers_registry` 的纯 debug 函数，减少 core 内部引用面）
+- LLM 空返回且无新摘要时保留 summary_states 下轮接着滚（不再当成功消费；正常日记/有新摘要路径行为不变）
 - `_conf_schema.json` 删除孤儿配置 `auto_compress_notebook` / `auto_compress_threshold`（0.4.0 删调用点、0.4.2 删函数定义后 schema 漏删）
 - metadata.yaml 描述"零外部依赖"更正为"零外部向量依赖"（chromadb/filelock/watchdog 为外部依赖）
 - `info()` 版本 0.4.3 → 0.4.4

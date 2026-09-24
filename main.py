@@ -30,28 +30,6 @@ from .debug_logger import _dbg
 INJECT_START = "\n# Memory Context\n\n"
 
 
-def _scan_cmd_handlers() -> None:
-    try:
-        from astrbot.core.star.star_handler import (
-            EventType,
-            star_handlers_registry,
-        )
-
-        _dbg(f"plugin module name: {__name__}")
-        for h in star_handlers_registry.get_handlers_by_event_type(
-            EventType.AdapterMessageEvent, only_activated=False
-        ):
-            low = h.handler_name.lower()
-            mod = (h.handler_module_path or "").lower()
-            if "mem" in low or "simple_memory" in mod:
-                _dbg(
-                    f"cmd handler: full={h.handler_full_name} "
-                    f"module={h.handler_module_path} enabled={h.enabled}"
-                )
-    except Exception as e:
-        _dbg(f"cmd handler scan failed: {e!r}")
-
-
 def _resolve_data_path(raw: str, fallback: str) -> Path:
     raw = str(raw or "").strip()
     p = Path(raw)
@@ -117,7 +95,6 @@ class SimpleMemory(Star):
 
     async def initialize(self) -> None:
         _dbg("initialize() start")
-        _scan_cmd_handlers()
         self.workspace = _resolve_data_path(
             "", "memory"
         )

@@ -356,9 +356,14 @@ class DigestWorker:
                 self.diary_file_for(sid).append_to(
                     target, f"## [diary] {sid[:24]}\n{body}\n"
                 )
-            await self.store.update(
-                sid, summary="", summary_states=[], summary_consumed=True
-            )
+            if diary or summary_text:
+                await self.store.update(
+                    sid, summary="", summary_states=[], summary_consumed=True
+                )
+            else:
+                # 0.4.4: 空返回且无新摘要 → states 保留，下轮接着滚（PLAN §3.2 #8）
+                await self.store.update(sid, summary="")
+                logger.info(f"lite_memory {sid[:16]} 空返回无新摘要，states 保留下轮继续滚")
         else:
             day_str = now.date().isoformat()
             raw_text = ""
